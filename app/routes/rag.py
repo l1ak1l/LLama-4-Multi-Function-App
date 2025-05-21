@@ -20,7 +20,7 @@ async def upload_document(
     """
     Upload and process a document for later querying
     
-    - **file**: Document to process (PDF, TXT, CSV)
+    - file: Document to process (PDF, TXT, CSV)
     
     Returns the document_id to use for querying
     """
