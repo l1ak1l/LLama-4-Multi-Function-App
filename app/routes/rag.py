@@ -1,10 +1,10 @@
 """
-RAG API Routes
+RAG API Routes - Simplified with only /upload and /rag_query
 """
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query
-from typing import Optional, List
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
+from typing import Optional
 from app.services.rag import RAGService
-from app.models.schemas import RAGResponse, DocumentResponse, DocumentListResponse
+from app.models.schemas import RAGResponse, DocumentResponse
 
 router = APIRouter(prefix="/rag", tags=["RAG"])
 
@@ -20,15 +20,26 @@ async def upload_document(
     """
     Upload and process a document for later querying
     
-    - file: Document to process (PDF, TXT, CSV)
+    This endpoint handles:
+    - Document upload
+    - Text extraction and chunking
+    - Embedding generation using Segmind API
+    - Vector database creation and storage
     
-    Returns the document_id to use for querying
+    Args:
+        file: Document to process (PDF, TXT, CSV)
+    
+    Returns:
+        DocumentResponse with document_id for future queries
     """
     try:
         if not file.filename:
             raise HTTPException(400, "Filename is required")
             
+        # Read the uploaded file
         document = await file.read()
+        
+        # Process the document (embeddings + vector DB)
         result = service.process_document(
             document=document,
             filename=file.filename
@@ -36,116 +47,60 @@ async def upload_document(
         
         if result.get("status") == "error":
             error_msg = result.get("error", "Unknown error")
-            raise HTTPException(500, error_msg)
+            raise HTTPException(500, f"Document processing failed: {error_msg}")
             
         return result
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, f"Upload failed: {str(e)}")
 
-@router.get("/documents", response_model=DocumentListResponse)
-async def list_documents(
-    service: RAGService = Depends(get_rag_service)
-):
-    """
-    List all processed documents
-    
-    Returns a list of document IDs and metadata
-    """
-    try:
-        documents = service.document_cache.list_documents()
-        return {
-            "documents": [
-                {
-                    "document_id": doc_id,
-                    "filename": info["filename"],
-                    "timestamp": info["timestamp"],
-                    **info.get("metadata", {})
-                }
-                for doc_id, info in documents.items()
-            ],
-            "status": "success"
-        }
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-@router.post("/query", response_model=RAGResponse)
-async def query_document(
+@router.post("/rag_query", response_model=RAGResponse)
+async def rag_query(
     document_id: str = Form(...),
     query: str = Form(...),
-    evaluate: bool = Form(True),
     top_k: Optional[int] = Form(3),
     service: RAGService = Depends(get_rag_service)
 ):
     """
-    Query a previously processed document
+    Query a previously processed document with Gemini evaluation
     
-    - **document_id**: ID of the document to query
-    - **query**: Question to answer based on the document
-    - **evaluate**: Whether to evaluate the answer
-    - **top_k**: Number of contexts to retrieve
+    This endpoint handles:
+    - Retrieving relevant context from vector database
+    - Generating answer using Groq + Llama 4 Scout
+    - Evaluating response quality using Google Gemini
+    
+    Args:
+        document_id: ID of the previously uploaded document
+        query: Question to answer based on the document
+        top_k: Number of relevant contexts to retrieve (default: 3)
+    
+    Returns:
+        RAGResponse with answer, contexts, and Gemini evaluation scores
     """
     try:
+        if not document_id.strip():
+            raise HTTPException(400, "document_id is required")
+            
+        if not query.strip():
+            raise HTTPException(400, "query is required")
+            
+        # Query the document with automatic Gemini evaluation
         result = service.query(
             document_id=document_id,
             query=query,
-            evaluate=evaluate,
+            evaluate=True,  # Always evaluate with Gemini
             top_k=top_k
         )
         
         if result.get("status") == "error":
             error_msg = result.get("error", "Unknown error")
-            raise HTTPException(500, error_msg)
+            raise HTTPException(500, f"Query failed: {error_msg}")
             
         return result
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-@router.post("/", response_model=RAGResponse)
-async def rag_endpoint(
-    query: str = Form(...),
-    evaluate: bool = Form(True),
-    top_k: Optional[int] = Form(3),
-    file: Optional[UploadFile] = File(None),
-    document_id: Optional[str] = Form(None),
-    service: RAGService = Depends(get_rag_service)
-):
-    """
-    Main RAG endpoint - Combines upload and query
-    
-    - **query**: Question to answer based on the document
-    - **evaluate**: Whether to evaluate the answer
-    - **top_k**: Number of contexts to retrieve
-    - **file**: Document to process (optional if document_id is provided)
-    - **document_id**: ID of a previously processed document (optional if file is provided)
-    """
-    try:
-        # Check if we have either a file or a document_id
-        if not file and not document_id:
-            raise HTTPException(400, "Either file or document_id must be provided")
-            
-        # If we have a file, process it first
-        if file and file.filename:
-            document = await file.read()
-            result = service.process_rag(
-                document=document,
-                filename=file.filename,
-                query=query,
-                evaluate=evaluate,
-                top_k=top_k
-            )
-        else:
-            # Otherwise use the provided document_id
-            result = service.query(
-                document_id=document_id,
-                query=query,
-                evaluate=evaluate,
-                top_k=top_k
-            )
         
-        if result.get("status") == "error":
-            error_msg = result.get("error", "Unknown error")
-            raise HTTPException(500, error_msg)
-            
-        return result
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, f"RAG query failed: {str(e)}")

@@ -19,3 +19,9 @@ class AgentResponse(BaseModel):
     task: str
     agents_used: List[str]
     results: Dict[str, str]
+
+class DocumentResponse(BaseModel):
+    id: str
+    filename: str
+    status: str
+    created_at: str
